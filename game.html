@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Flappy Square Pro</title>
+  <style>
+    body {
+      margin: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      background: linear-gradient(to bottom, #87ceeb, #e0f7fa);
+      font-family: "Segoe UI", sans-serif;
+      user-select: none;
+    }
+    #gameContainer {
+      position: relative;
+      width: 480px;
+      height: 720px;
+      background: #cce5ff;
+      border-radius: 16px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+      overflow: hidden;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+    #uiOverlay {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      background: rgba(0,0,0,0.5);
+      color: white;
+      text-align: center;
+      padding: 20px;
+      box-sizing: border-box;
+      z-index: 10;
+    }
+    #uiOverlay.hidden { display: none; }
+    #uiOverlay h1 { margin: 0 0 10px; font-size: 40px; }
+    #uiOverlay p { margin: 5px 0; font-size: 18px; }
+    #uiOverlay button {
+      margin-top: 15px;
+      padding: 10px 20px;
+      border: none;
+      border-radius: 12px;
+      background: #ff9800;
+      color: white;
+      font-size: 18px;
+      cursor: pointer;
+      transition: 0.2s;
+    }
+    #uiOverlay button:hover { background: #e68900; }
+  </style>
+</head>
+<body>
+  <div id="gameContainer">
+    <canvas id="gameCanvas" width="480" height="720"></canvas>
+    <div id="uiOverlay">
+      <h1>Flappy Square</h1>
+      <p>Tap / Space to Flap</p>
+      <p>Press P to Pause</p>
+      <button id="startBtn">Start Game</button>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+    const overlay = document.getElementById("uiOverlay");
+    const startBtn = document.getElementById("startBtn");
+
+    // Game state
+    let running = false, paused = false, gameOver = false;
+    let score = 0, best = localStorage.getItem("flappyBest") || 0;
+    const world = {
+      w: canvas.width, h: canvas.height,
+      gravity: 1100, flapVel: -360,
+      bird: { x: 120, y: 360, vy: 0, size: 28 },
+      pipes: [], pipeGap: 160, pipeW: 70, pipeSpacing: 220, speed: 180,
+      timeSincePipe: 0, passedIds: new Set(), t: 0,
+      clouds: [{x:50,y:100},{x:300,y:200},{x:200,y:50}]
+    };
+
+    // Reset
+    function resetWorld() {
+      score = 0; gameOver = false; paused = false;
+      world.bird = { x: 120, y: 360, vy: 0, size: 28 };
+      world.pipes = []; world.timeSincePipe = 0; world.passedIds.clear();
+    }
+
+    function startGame() {
+      resetWorld();
+      running = true; overlay.classList.add("hidden");
+      loop(performance.now());
+    }
+
+    function endGame() {
+      running = false; gameOver = true;
+      best = Math.max(best, score);
+      localStorage.setItem("flappyBest", best);
+      showOverlay("Game Over", `Score: ${score} | Best: ${best}`);
+    }
+
+    function showOverlay(title, subtitle) {
+      overlay.innerHTML = `<h1>${title}</h1><p>${subtitle}</p><button id="restartBtn">Restart</button>`;
+      overlay.classList.remove("hidden");
+      document.getElementById("restartBtn").onclick = startGame;
+    }
+
+    function flap() {
+      if (!running) { startGame(); return; }
+      if (gameOver) return;
+      world.bird.vy = world.flapVel;
+      // playSound("flap.mp3");
+    }
+
+    function togglePause() {
+      if (!running || gameOver) return;
+      paused = !paused;
+      if (paused) showOverlay("Paused", "Press P to Resume");
+      else overlay.classList.add("hidden");
+    }
+
+    // Game loop
+    let rafId;
+    function loop(tNow) {
+      const prevT = world.t || tNow;
+      let dt = (tNow - prevT)/1000;
+      if (dt > 0.033) dt = 0.033;
+      world.t = tNow;
+      if (!paused) step(dt);
+      draw();
+      if (running) rafId = requestAnimationFrame(loop);
+    }
+
+    function step(dt) {
+      const b = world.bird;
+      b.vy += world.gravity*dt; b.y += b.vy*dt;
+      if (b.y<0){ b.y=0; b.vy=0; }
+      world.timeSincePipe+=dt;
+      if (world.timeSincePipe >= world.pipeSpacing/world.speed) {
+        world.timeSincePipe=0;
+        const margin=70, gapY=margin+Math.random()*(world.h-2*margin-world.pipeGap);
+        world.pipes.push({x:world.w+10,gapY,id:crypto.randomUUID()});
+        if (world.pipes.length>10) world.pipes.shift();
+      }
+      for (const p of world.pipes) {
+        p.x-=world.speed*dt;
+        if (p.x+world.pipeW<0) continue;
+        if (p.x+world.pipeW<b.x && !world.passedIds.has(p.id)){
+          world.passedIds.add(p.id); score++;
+          // playSound("score.mp3");
+        }
+      }
+      for (const p of world.pipes){
+        const hitX = b.x+b.size>p.x && b.x<p.x+world.pipeW;
+        const hitY = b.y<p.gapY || b.y+b.size>p.gapY+world.pipeGap;
+        if (hitX && hitY) return endGame();
+      }
+      if (b.y+b.size>=world.h-40) return endGame();
+      for (const c of world.clouds) { c.x-=30*dt; if(c.x<-100) c.x=world.w+50; }
+    }
+
+    function draw() {
+      ctx.clearRect(0,0,world.w,world.h);
+
+      // Sky
+      const grad=ctx.createLinearGradient(0,0,0,world.h);
+      grad.addColorStop(0,"#87ceeb"); grad.addColorStop(1,"#e0f7fa");
+      ctx.fillStyle=grad; ctx.fillRect(0,0,world.w,world.h);
+
+      // Clouds
+      ctx.fillStyle="white";
+      for(const c of world.clouds){
+        ctx.beginPath();
+        ctx.arc(c.x,c.y,30,0,Math.PI*2);
+        ctx.arc(c.x+30,c.y+10,25,0,Math.PI*2);
+        ctx.arc(c.x-30,c.y+10,25,0,Math.PI*2);
+        ctx.fill();
+      }
+
+      // Pipes
+      ctx.fillStyle="#4caf50";
+      for(const p of world.pipes){
+        ctx.fillRect(p.x,0,world.pipeW,p.gapY);
+        ctx.fillRect(p.x,p.gapY+world.pipeGap,world.pipeW,world.h-(p.gapY+world.pipeGap)-40);
+      }
+
+      // Ground (scrolling)
+      ctx.fillStyle="#7cc36d";
+      ctx.fillRect(0,world.h-40,world.w,40);
+
+      // Bird
+      const b=world.bird;
+      ctx.save();
+      ctx.translate(b.x+b.size/2,b.y+b.size/2);
+      ctx.rotate(Math.max(-0.5,Math.min(0.6,b.vy/600)));
+      ctx.fillStyle="#ff5722";
+      ctx.fillRect(-b.size/2,-b.size/2,b.size,b.size);
+      ctx.restore();
+
+      // HUD
+      ctx.fillStyle="#073b4c";
+      ctx.font="bold 26px sans-serif";
+      ctx.textAlign="center";
+      ctx.fillText(score, world.w/2, 50);
+    }
+
+    // Input
+    window.addEventListener("keydown",e=>{
+      if([" ","ArrowUp","w","W"].includes(e.key)) flap();
+      if(e.key==="p"||e.key==="P") togglePause();
+      if(e.key==="r"||e.key==="R") startGame();
+    });
+    canvas.addEventListener("mousedown",flap);
+    canvas.addEventListener("touchstart",e=>{e.preventDefault();flap();},{passive:false});
+    startBtn.onclick=startGame;
+
+    draw(); // Initial
+  </script>
+</body>
+</html>
